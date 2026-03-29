@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Home, Layers, BarChart2, Settings, Plus } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTranslation } from '../lib/db';
+import { PWAInstallPrompt } from './PWAInstallPrompt';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [hash, setHash] = useState(window.location.hash || '#home');
@@ -87,6 +88,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           );
         })}
       </nav>
+
+      <PWAInstallPrompt />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { Layout } from './components/Layout';
 import { DBContext, loadDB, saveDB } from './lib/db';
 import { DB } from './types';
 import { startReminderChecker, checkAndFireReminders, getNotifPermission, PERM } from './lib/reminder';
+import { normalizeDB } from './lib/notes';
 
 // Placeholder components for pages
 import { Home } from './pages/Home';
@@ -24,8 +25,9 @@ export default function App() {
   const setDB = useCallback((newDB: DB | ((prev: DB) => DB)) => {
     setDBState((prev) => {
       const updated = typeof newDB === 'function' ? newDB(prev) : newDB;
-      saveDB(updated);
-      return updated;
+      const normalized = normalizeDB(updated);
+      saveDB(normalized);
+      return normalized;
     });
   }, []);
 

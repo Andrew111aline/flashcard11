@@ -1,31 +1,15 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { createContext, useContext } from 'react';
 import { DB } from '../types';
+import { createDefaultDB, normalizeDB } from './notes';
 
 const STORAGE_KEY = 'fsrs_flashcard_db';
-
-const defaultDB: DB = {
-  decks: [],
-  cards: [],
-  reviews: [],
-  settings: {
-    lang: 'zh',
-    retention: 0.9,
-    maxInterval: 36500,
-    dailyNewCards: 20,
-    reminder: {
-      enabled: false,
-      times: [],
-      lastFired: {}
-    }
-  }
-};
 
 export function loadDB(): DB {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : defaultDB;
+    return raw ? normalizeDB(JSON.parse(raw)) : createDefaultDB();
   } catch {
-    return defaultDB;
+    return createDefaultDB();
   }
 }
 

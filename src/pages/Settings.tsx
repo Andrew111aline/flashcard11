@@ -63,7 +63,7 @@ export function Settings() {
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        if (data.decks && data.cards && data.settings) {
+        if (data.decks && data.settings && (data.cards || data.notes)) {
           if (confirm(t('settings_import_confirm'))) {
             setDB(data);
             alert(t('settings_import_success'));
@@ -84,6 +84,7 @@ export function Settings() {
       if (confirm(t('settings_clear_confirm2'))) {
         setDB({
           decks: [],
+          notes: [],
           cards: [],
           reviews: [],
           settings: {
