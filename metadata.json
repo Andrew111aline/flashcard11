@@ -1,0 +1,5 @@
+{
+  "name": "FSRS Flashcards",
+  "description": "An offline spaced repetition flashcard app using the FSRS-5 algorithm.",
+  "requestFramePermissions": []
+}
