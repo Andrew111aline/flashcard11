@@ -150,4 +150,156 @@
     color: oklch(0.53 0.02 264.665);
     font-style: italic;
   }
+
+  #reminder-popup {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  #reminder-popup[hidden] {
+    display: none;
+  }
+
+  .reminder-popup-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    backdrop-filter: blur(2px);
+    animation: reminder-popup-fade-in 200ms ease;
+  }
+
+  .reminder-popup-card {
+    position: relative;
+    z-index: 1;
+    width: min(100%, 24rem);
+    border-radius: 1.75rem;
+    background: white;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+    transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .reminder-popup-card--visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  .reminder-popup-card--exit {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+
+  .reminder-popup-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .reminder-popup-title {
+    text-align: center;
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: oklch(0.21 0.034 264.665);
+  }
+
+  .reminder-popup-body {
+    margin-top: 0.35rem;
+    text-align: center;
+    font-size: 0.95rem;
+    line-height: 1.65;
+    color: oklch(0.47 0.02 264.665);
+  }
+
+  .reminder-popup-time {
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: oklch(0.58 0.015 264.665);
+  }
+
+  .reminder-popup-actions {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .reminder-popup-action {
+    min-height: 2.75rem;
+    border-radius: 1rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+  }
+
+  .reminder-popup-action-primary {
+    flex: 1;
+    background: oklch(0.704 0.14 182.503);
+    color: white;
+  }
+
+  .reminder-popup-action-primary:hover {
+    background: oklch(0.64 0.14 182.503);
+  }
+
+  .reminder-popup-action-secondary {
+    border: 1px solid oklch(0.9 0.01 258.338);
+    background: oklch(0.98 0.004 264.665);
+    color: oklch(0.43 0.02 264.665);
+  }
+
+  .reminder-popup-action-secondary:hover {
+    background: oklch(0.95 0.01 264.665);
+  }
+
+  .reminder-popup-close {
+    position: absolute;
+    top: 0.85rem;
+    right: 0.85rem;
+    display: flex;
+    height: 2rem;
+    width: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.9rem;
+    color: oklch(0.58 0.015 264.665);
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  .reminder-popup-close:hover {
+    background: oklch(0.96 0.006 264.665);
+    color: oklch(0.28 0.03 264.665);
+  }
+
+  .reminder-popup-close svg {
+    height: 1rem;
+    width: 1rem;
+  }
+
+  @media (min-width: 480px) {
+    #reminder-popup {
+      align-items: center;
+    }
+  }
+
+  @keyframes reminder-popup-fade-in {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
 }

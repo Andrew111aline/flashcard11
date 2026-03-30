@@ -3,16 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Layout } from './components/Layout';
 import { DBContext, loadDB, saveDB } from './lib/db';
 import { DB } from './types';
 import {
+  hasReminderEffectsEnabled,
   startReminderChecker,
   stopReminderChecker,
-  checkAndFireReminders,
-  getNotifPermission,
-  PERM,
 } from './lib/reminder';
 import { normalizeDB } from './lib/notes';
 
@@ -27,6 +25,7 @@ import { CardEditor } from './pages/CardEditor';
 export default function App() {
   const [db, setDBState] = useState<DB>(loadDB());
   const [hash, setHash] = useState(window.location.hash || '#home');
+  const dbRef = useRef(db);
 
   const setDB = useCallback((newDB: DB | ((prev: DB) => DB)) => {
     setDBState((prev) => {
@@ -38,38 +37,43 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    dbRef.current = db;
+  }, [db]);
+
+  const getCurrentDB = useCallback(() => dbRef.current, []);
+
+  useEffect(() => {
     const handleHashChange = () => setHash(window.location.hash || '#home');
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Initialize reminder checker
   useEffect(() => {
     document.documentElement.lang = db.settings.lang === 'zh' ? 'zh-CN' : 'en';
+  }, [db.settings.lang]);
 
-    if (db.settings.reminder?.enabled && getNotifPermission() === PERM.GRANTED) {
-      startReminderChecker(() => db, setDB);
+  useEffect(() => {
+    const shouldRunReminderChecker =
+      db.settings.reminder?.enabled &&
+      db.settings.reminder?.times.length > 0 &&
+      hasReminderEffectsEnabled(db.settings.reminder);
+
+    if (shouldRunReminderChecker) {
+      startReminderChecker(getCurrentDB, setDB);
     } else {
       stopReminderChecker();
     }
-    
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        if (db.settings.reminder?.enabled && getNotifPermission() === PERM.GRANTED) {
-          startReminderChecker(() => db, setDB);
-          checkAndFireReminders(() => db, setDB);
-        } else {
-          stopReminderChecker();
-        }
-      }
-    };
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
       stopReminderChecker();
     };
-  }, [db.settings.reminder?.enabled, db.settings.lang, db, setDB]);
+  }, [
+    db.settings.reminder?.enabled,
+    db.settings.reminder?.times,
+    db.settings.reminder?.effects,
+    getCurrentDB,
+    setDB,
+  ]);
 
   const renderPage = () => {
     const path = hash.split('?')[0];

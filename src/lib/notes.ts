@@ -7,10 +7,22 @@ import {
   Note,
   NoteFields,
   NoteType,
+  ReminderDebugType,
+  ReminderDebugLogEntry,
+  ReminderDebugSource,
+  ReminderEffectKey,
+  ReminderEffects,
   ReviewLog,
   Settings,
+  SoundType,
+  VibrationPattern,
 } from '../types';
 import { uuid } from './fsrs';
+import {
+  createDefaultReminderSettings,
+  DEFAULT_SOUND_TYPE,
+  DEFAULT_VIBRATION_PATTERN,
+} from './reminder';
 
 type ClozeGroupMap = Record<string, { full: string; answer: string; hint: string }[]>;
 
@@ -32,11 +44,7 @@ export function createDefaultDB(): DB {
       retention: 0.9,
       maxInterval: 36500,
       dailyNewCards: 20,
-      reminder: {
-        enabled: false,
-        times: [],
-        lastFired: {},
-      },
+      reminder: createDefaultReminderSettings(),
     },
   };
 }
@@ -420,6 +428,17 @@ function normalizeSettings(raw: unknown): Settings {
   const reminder = settings.reminder && typeof settings.reminder === 'object'
     ? (settings.reminder as Record<string, unknown>)
     : {};
+  const reminderEffects = reminder.effects && typeof reminder.effects === 'object'
+    ? (reminder.effects as Record<string, unknown>)
+    : {};
+  const defaultReminder = createDefaultReminderSettings();
+  const vibrationPattern = asString(reminder.vibrationPattern);
+  const soundType = asString(reminder.soundType);
+  const debugLog = Array.isArray(reminder.debugLog)
+    ? reminder.debugLog
+        .map(normalizeReminderDebugLogEntry)
+        .filter(Boolean) as ReminderDebugLogEntry[]
+    : [];
 
   return {
     lang: settings.lang === 'en' ? 'en' : 'zh',
@@ -437,6 +456,15 @@ function normalizeSettings(raw: unknown): Settings {
               Object.entries(reminder.lastFired as Record<string, unknown>).map(([key, value]) => [key, Boolean(value)]),
             )
           : {},
+      effects: {
+        systemNotif: readReminderEffect(reminderEffects, 'systemNotif', defaultReminder.effects.systemNotif),
+        inAppPopup: readReminderEffect(reminderEffects, 'inAppPopup', defaultReminder.effects.inAppPopup),
+        vibration: readReminderEffect(reminderEffects, 'vibration', defaultReminder.effects.vibration),
+        sound: readReminderEffect(reminderEffects, 'sound', defaultReminder.effects.sound),
+      },
+      vibrationPattern: isVibrationPattern(vibrationPattern) ? vibrationPattern : DEFAULT_VIBRATION_PATTERN,
+      soundType: isSoundType(soundType) ? soundType : DEFAULT_SOUND_TYPE,
+      debugLog,
     },
   };
 }
@@ -689,6 +717,60 @@ function renderInlineMarkdown(text: string) {
 
 function asString(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function readReminderEffect(
+  effects: Record<string, unknown>,
+  key: keyof ReminderEffects,
+  fallback: boolean,
+) {
+  return effects[key] === undefined ? fallback : Boolean(effects[key]);
+}
+
+function normalizeReminderDebugLogEntry(raw: unknown): ReminderDebugLogEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const item = raw as Record<string, unknown>;
+  const type = asString(item.type);
+  const source = asString(item.source);
+  const requestedEffects = Array.isArray(item.requestedEffects)
+    ? item.requestedEffects.map((effect) => String(effect)).filter(isReminderEffectKey)
+    : [];
+  const deliveredEffects = Array.isArray(item.deliveredEffects)
+    ? item.deliveredEffects.map((effect) => String(effect)).filter(isReminderEffectKey)
+    : [];
+
+  return {
+    id: asString(item.id) || `reminder-log-${Date.now()}`,
+    createdAt: asIsoString(item.createdAt) || nowIso(),
+    type: isReminderDebugType(type) ? type : 'check',
+    source: isReminderDebugSource(source) ? source : 'manual',
+    reason: asString(item.reason) || 'unknown',
+    scheduledTime: asString(item.scheduledTime) || null,
+    dueCount: typeof item.dueCount === 'number' && Number.isFinite(item.dueCount) ? item.dueCount : null,
+    requestedEffects,
+    deliveredEffects,
+  };
+}
+
+function isVibrationPattern(value: string): value is VibrationPattern {
+  return ['gentle', 'standard', 'strong', 'pulse'].includes(value);
+}
+
+function isSoundType(value: string): value is SoundType {
+  return ['bell', 'chime', 'ping'].includes(value);
+}
+
+function isReminderEffectKey(value: string): value is ReminderEffectKey {
+  return ['systemNotif', 'inAppPopup', 'vibration', 'sound'].includes(value);
+}
+
+function isReminderDebugSource(value: string): value is ReminderDebugSource {
+  return ['interval', 'visibility', 'focus', 'startup', 'manual'].includes(value);
+}
+
+function isReminderDebugType(value: string): value is ReminderDebugType {
+  return ['trigger', 'preview', 'check', 'recovery'].includes(value);
 }
 
 function asNumber(value: unknown, fallback: number) {

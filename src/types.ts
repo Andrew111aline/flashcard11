@@ -74,10 +74,40 @@ export interface ReviewLog {
   reviewedAt: string;
 }
 
+export type VibrationPattern = 'gentle' | 'standard' | 'strong' | 'pulse';
+export type SoundType = 'bell' | 'chime' | 'ping';
+
+export interface ReminderEffects {
+  systemNotif: boolean;
+  inAppPopup: boolean;
+  vibration: boolean;
+  sound: boolean;
+}
+
+export type ReminderEffectKey = keyof ReminderEffects;
+export type ReminderDebugSource = 'interval' | 'visibility' | 'focus' | 'startup' | 'manual';
+export type ReminderDebugType = 'trigger' | 'preview' | 'check' | 'recovery';
+
+export interface ReminderDebugLogEntry {
+  id: string;
+  createdAt: string;
+  type: ReminderDebugType;
+  source: ReminderDebugSource;
+  reason: string;
+  scheduledTime: string | null;
+  dueCount: number | null;
+  requestedEffects: ReminderEffectKey[];
+  deliveredEffects: ReminderEffectKey[];
+}
+
 export interface ReminderSettings {
   enabled: boolean;
   times: string[];
   lastFired: Record<string, boolean>;
+  effects: ReminderEffects;
+  vibrationPattern: VibrationPattern;
+  soundType: SoundType;
+  debugLog: ReminderDebugLogEntry[];
 }
 
 export interface Settings {

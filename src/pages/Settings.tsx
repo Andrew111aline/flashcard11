@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  AppWindow,
   Bell,
   BellOff,
   CheckCircle2,
@@ -15,41 +16,58 @@ import {
   Smartphone,
   Trash2,
   Upload,
+  Volume2,
   X,
 } from 'lucide-react';
 import { useDB, useTranslation } from '../lib/db';
 import { cn } from '../lib/utils';
 import { ReminderSettings } from '../types';
 import {
+  createDefaultReminderSettings,
+  formatReminderDisplayTime,
+  getReminderRuntimeState,
   getPermissionStatus,
+  getReminderEffects,
   PERM,
   PermissionStatus,
+  playReminderSound,
   requestPermission,
-  sendTestNotification,
+  runReminderDebugCheck,
+  sendTestReminder,
+  SOUND_TYPES,
+  supportsVibration,
+  testVibration,
+  VIBRATION_PATTERNS,
 } from '../lib/reminder';
 
 const MAX_REMINDER_TIMES = 5;
-const DEFAULT_REMINDER: ReminderSettings = {
-  enabled: false,
-  times: [],
-  lastFired: {},
-};
 
 type GuideTone = 'success' | 'danger' | 'info' | 'warning' | 'neutral';
 
 function cloneReminder(reminder?: ReminderSettings): ReminderSettings {
+  const fallback = createDefaultReminderSettings();
   return {
-    enabled: reminder?.enabled ?? DEFAULT_REMINDER.enabled,
-    times: [...(reminder?.times ?? DEFAULT_REMINDER.times)],
-    lastFired: { ...(reminder?.lastFired ?? DEFAULT_REMINDER.lastFired) },
+    ...fallback,
+    ...reminder,
+    times: [...(reminder?.times ?? fallback.times)],
+    lastFired: { ...(reminder?.lastFired ?? fallback.lastFired) },
+    debugLog: [...(reminder?.debugLog ?? fallback.debugLog)],
+    effects: getReminderEffects(reminder),
+    vibrationPattern: reminder?.vibrationPattern ?? fallback.vibrationPattern,
+    soundType: reminder?.soundType ?? fallback.soundType,
   };
 }
 
 function normalizeReminder(reminder: ReminderSettings): ReminderSettings {
   return {
-    enabled: reminder.enabled,
+    ...createDefaultReminderSettings(),
+    ...reminder,
     times: [...new Set(reminder.times.filter(Boolean))].sort(),
     lastFired: { ...reminder.lastFired },
+    debugLog: [...reminder.debugLog],
+    effects: getReminderEffects(reminder),
+    vibrationPattern: reminder.vibrationPattern,
+    soundType: reminder.soundType,
   };
 }
 
@@ -80,12 +98,15 @@ export function Settings() {
   const [maxInterval, setMaxInterval] = useState(db.settings.maxInterval);
   const [dailyNewCards, setDailyNewCards] = useState(db.settings.dailyNewCards);
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>(() => getPermissionStatus());
+  const [runtimeState, setRuntimeState] = useState(() => getReminderRuntimeState());
   const timeInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   const reminder = cloneReminder(db.settings.reminder);
-  const reminderEnabled = reminder.enabled;
   const reminderTimes = reminder.times;
-  const isGranted = permissionStatus.state === PERM.GRANTED;
+  const reminderEffects = reminder.effects;
+  const notificationsGranted = permissionStatus.state === PERM.GRANTED;
+  const systemNotificationsSupported = permissionStatus.support === 'supported';
+  const vibrationSupported = supportsVibration();
   const isMobileDevice = permissionStatus.platform.isMobile || permissionStatus.platform.isTablet;
 
   useEffect(() => {
@@ -114,6 +135,18 @@ export function Settings() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (media.removeEventListener) media.removeEventListener('change', handleDisplayModeChange);
       else media.removeListener(handleDisplayModeChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshRuntime = () => setRuntimeState(getReminderRuntimeState());
+    refreshRuntime();
+    const intervalId = window.setInterval(refreshRuntime, 5000);
+    window.addEventListener('focus', refreshRuntime);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', refreshRuntime);
     };
   }, []);
 
@@ -193,7 +226,7 @@ export function Settings() {
             retention: 0.9,
             maxInterval: 36500,
             dailyNewCards: 20,
-            reminder: cloneReminder(DEFAULT_REMINDER),
+            reminder: createDefaultReminderSettings(),
           },
         });
         alert(t('settings_clear_success'));
@@ -202,12 +235,18 @@ export function Settings() {
   };
 
   const handleRequestPermission = async () => {
-    await requestPermission();
+    const result = await requestPermission();
     setPermissionStatus(getPermissionStatus());
+
+    if (result === PERM.GRANTED) {
+      updateReminderSettings((current) => ({
+        ...current,
+        enabled: true,
+      }));
+    }
   };
 
   const handleToggleReminder = (enabled: boolean) => {
-    if (!isGranted) return;
     updateReminderSettings((current) => ({ ...current, enabled }));
   };
 
@@ -279,35 +318,76 @@ export function Settings() {
     }
   };
 
+  const handleUpdateEffect = (
+    key: keyof ReminderSettings['effects'],
+    value: boolean,
+    options: { disabled?: boolean } = {},
+  ) => {
+    if (options.disabled) return;
+
+    updateReminderSettings((current) => ({
+      ...current,
+      effects: {
+        ...getReminderEffects(current),
+        [key]: value,
+      },
+    }));
+  };
+
+  const handleSetVibrationPattern = (pattern: ReminderSettings['vibrationPattern']) => {
+    updateReminderSettings((current) => ({
+      ...current,
+      vibrationPattern: pattern,
+    }));
+
+    if (!testVibration(pattern)) {
+      alert(t('settings_reminder_vibration_not_supported'));
+    }
+  };
+
+  const handleSetSoundType = (soundType: ReminderSettings['soundType']) => {
+    updateReminderSettings((current) => ({
+      ...current,
+      soundType,
+    }));
+    playReminderSound(soundType);
+    setRuntimeState(getReminderRuntimeState());
+  };
+
+  const handlePreviewReminder = () => {
+    if (!sendTestReminder(db, setDB)) {
+      alert(t('settings_reminder_no_effects'));
+    }
+    setRuntimeState(getReminderRuntimeState());
+  };
+
+  const handleRunDebugCheck = () => {
+    runReminderDebugCheck(() => db, setDB);
+    setRuntimeState(getReminderRuntimeState());
+  };
+
+  const handleClearDebugLog = () => {
+    updateReminderSettings((current) => ({
+      ...current,
+      debugLog: [],
+    }));
+  };
+
   const getNextFireLabel = (timeStr: string) => {
     const now = new Date();
-    const [h, m] = timeStr.split(':').map(Number);
+    const [hours, minutes] = timeStr.split(':').map(Number);
     const next = new Date(now);
-    next.setHours(h, m, 0, 0);
+    next.setHours(hours, minutes, 0, 0);
     if (next <= now) next.setDate(next.getDate() + 1);
 
     const diffMs = next.getTime() - now.getTime();
-    const diffH = Math.floor(diffMs / 3600000);
-    const diffMin = Math.floor((diffMs % 3600000) / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffMinutes = Math.floor((diffMs % 3600000) / 60000);
 
-    if (diffH === 0 && diffMin <= 1) return t('soon');
-    if (diffH === 0) return t('settings_reminder_in_min', diffMin);
-    if (diffH < 24) return t('settings_reminder_in_hour', diffH);
+    if (diffHours === 0 && diffMinutes <= 1) return t('soon');
+    if (diffHours === 0) return t('settings_reminder_in_min', diffMinutes);
+    if (diffHours < 24) return t('settings_reminder_in_hour', diffHours);
     return t('settings_reminder_tomorrow');
-  };
-
-  const formatDisplayTime = (hhmm: string) => {
-    const [hours, minutes] = hhmm.split(':').map(Number);
-    if (db.settings.lang === 'en') {
-      const date = new Date();
-      date.setHours(hours, minutes, 0, 0);
-      return new Intl.DateTimeFormat('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(date);
-    }
-
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
   };
 
   const getDeniedSteps = () => {
@@ -355,6 +435,74 @@ export function Settings() {
         lang,
       },
     }));
+  };
+
+  const formatDebugDateTime = (value: string | number | null) => {
+    if (!value) return t('settings_reminder_debug_none');
+    const date = typeof value === 'number' ? new Date(value) : new Date(value);
+    if (Number.isNaN(date.getTime())) return t('settings_reminder_debug_none');
+    return new Intl.DateTimeFormat(db.settings.lang === 'zh' ? 'zh-CN' : 'en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(date);
+  };
+
+  const latestTrigger = reminder.debugLog.find((entry) =>
+    entry.type === 'trigger' || entry.type === 'preview' || entry.type === 'recovery');
+
+  const formatDebugReason = (reason: string) => {
+    const key = `settings_reminder_debug_reason_${reason.replace(/-/g, '_')}`;
+    const translated = t(key);
+    return translated === key ? reason : translated;
+  };
+
+  const formatDebugSource = (source: string) => {
+    const key = `settings_reminder_debug_source_${source}`;
+    const translated = t(key);
+    return translated === key ? source : translated;
+  };
+
+  const formatPermissionLabel = () => {
+    switch (permissionStatus.state) {
+      case PERM.GRANTED:
+        return t('settings_reminder_guide_granted_title');
+      case PERM.DENIED:
+        return t('settings_reminder_guide_denied_title');
+      case PERM.DEFAULT:
+        return t('settings_reminder_guide_default_title');
+      case 'ios-wrong-browser':
+        return t('settings_reminder_guide_browser_title');
+      case 'ios-too-old':
+        return t('settings_reminder_guide_upgrade_title');
+      case 'needs-pwa':
+        return t('settings_reminder_guide_pwa_title');
+      default:
+        return t('settings_reminder_guide_not_supported_title');
+    }
+  };
+
+  const formatEffectList = (effects: string[]) => {
+    if (!effects.length) return t('settings_reminder_debug_none');
+
+    const labels = effects.map((effect) => {
+      switch (effect) {
+        case 'systemNotif':
+          return t('settings_reminder_effect_system');
+        case 'inAppPopup':
+          return t('settings_reminder_effect_popup');
+        case 'vibration':
+          return t('settings_reminder_effect_vibration');
+        case 'sound':
+          return t('settings_reminder_effect_sound');
+        default:
+          return effect;
+      }
+    });
+
+    return labels.join(' / ');
   };
 
   const renderGuideCard = ({
@@ -536,6 +684,47 @@ export function Settings() {
     }
   };
 
+  const effectItems = [
+    {
+      key: 'systemNotif' as const,
+      icon: <Bell className="h-4 w-4" />,
+      label: t('settings_reminder_effect_system'),
+      desc: !systemNotificationsSupported
+        ? t('settings_reminder_effect_system_unavailable')
+        : notificationsGranted
+          ? t('settings_reminder_effect_system_desc')
+          : t('settings_reminder_effect_system_need_permission'),
+      checked: reminderEffects.systemNotif,
+      disabled: !systemNotificationsSupported,
+    },
+    {
+      key: 'inAppPopup' as const,
+      icon: <AppWindow className="h-4 w-4" />,
+      label: t('settings_reminder_effect_popup'),
+      desc: t('settings_reminder_effect_popup_desc'),
+      checked: reminderEffects.inAppPopup,
+      disabled: false,
+    },
+    {
+      key: 'vibration' as const,
+      icon: <Smartphone className="h-4 w-4" />,
+      label: t('settings_reminder_effect_vibration'),
+      desc: vibrationSupported
+        ? t('settings_reminder_effect_vibration_desc')
+        : t('settings_reminder_effect_vibration_unsupported'),
+      checked: reminderEffects.vibration,
+      disabled: !vibrationSupported,
+    },
+    {
+      key: 'sound' as const,
+      icon: <Volume2 className="h-4 w-4" />,
+      label: t('settings_reminder_effect_sound'),
+      desc: t('settings_reminder_effect_sound_desc'),
+      checked: reminderEffects.sound,
+      disabled: false,
+    },
+  ];
+
   return (
     <div className="mx-auto max-w-3xl p-6">
       <h1 className="mb-8 text-3xl font-bold text-gray-900">{t('settings_title')}</h1>
@@ -637,113 +826,201 @@ export function Settings() {
             </div>
 
             <label
-              className={cn(
-                'relative inline-flex h-10 w-[3.75rem] shrink-0 items-center',
-                isGranted ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
-              )}
+              className="relative inline-flex h-10 w-[3.75rem] shrink-0 cursor-pointer items-center"
               aria-label={t('settings_reminder_toggle_label')}
             >
               <input
                 type="checkbox"
                 className="peer sr-only"
-                checked={reminderEnabled}
+                checked={reminder.enabled}
                 onChange={(e) => handleToggleReminder(e.target.checked)}
-                disabled={!isGranted}
               />
-              <span className="h-8 w-14 rounded-full bg-slate-200 transition peer-checked:bg-teal-600 peer-disabled:bg-slate-200/80" />
+              <span className="h-8 w-14 rounded-full bg-slate-200 transition peer-checked:bg-teal-600" />
               <span className="pointer-events-none absolute left-[3px] top-[5px] h-7 w-7 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-6" />
             </label>
           </div>
 
           {renderPermissionGuide()}
 
-          {isGranted ? (
-            <div className={cn('px-5 py-4 transition-opacity duration-200', !reminderEnabled && 'pointer-events-none opacity-50')}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium text-slate-500">{t('settings_reminder_times')}</span>
-                <button
-                  type="button"
-                  onClick={handleAddReminderTime}
-                  disabled={reminderTimes.length >= MAX_REMINDER_TIMES}
-                  title={reminderTimes.length >= MAX_REMINDER_TIMES ? t('settings_reminder_limit') : undefined}
-                  className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-teal-700 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('settings_reminder_add')}
-                </button>
-              </div>
-
-              {reminderTimes.length === 0 ? (
-                <div className="mt-4 rounded-[1.25rem] border border-dashed border-slate-300 px-4 py-7 text-center text-sm text-slate-500">
-                  {t('settings_reminder_empty')}
-                </div>
-              ) : (
-                <div className="mt-3">
-                  {reminderTimes.map((time, index) => (
-                    <div
-                      key={`${time}-${index}`}
-                      className="flex items-center gap-3 border-b border-slate-100 py-3 last:border-b-0"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => openTimePicker(index)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            openTimePicker(index);
-                          }
-                        }}
-                        className="flex min-h-[44px] flex-1 items-center gap-3 rounded-[1.15rem] p-1 text-left transition hover:bg-slate-50"
-                        aria-label={t('settings_reminder_update_aria', time)}
-                      >
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-teal-700">
-                          <Clock3 className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-[1.35rem] font-semibold tracking-[0.02em] text-slate-900 tabular-nums sm:text-[1.5rem]">
-                            {formatDisplayTime(time)}
-                          </div>
-                          <div className="mt-0.5 text-xs text-slate-500">{getNextFireLabel(time)}</div>
-                        </div>
-                      </button>
-
-                      <input
-                        ref={(node) => {
-                          timeInputRefs.current[index] = node;
-                        }}
-                        type="time"
-                        value={time}
-                        onChange={(e) => handleUpdateReminderTime(index, e.target.value)}
-                        className="absolute h-0 w-0 opacity-0"
-                        aria-hidden="true"
-                        tabIndex={-1}
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveReminderTime(index)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                        aria-label={t('settings_reminder_delete_aria', time)}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {reminderTimes.length > 0 && reminderTimes.length < MAX_REMINDER_TIMES ? (
-                <button
-                  type="button"
-                  onClick={handleAddReminderTime}
-                  className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[1.1rem] border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('settings_reminder_add')}
-                </button>
-              ) : null}
+          <div className="px-5 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-slate-500">{t('settings_reminder_times')}</span>
+              <button
+                type="button"
+                onClick={handleAddReminderTime}
+                disabled={reminderTimes.length >= MAX_REMINDER_TIMES}
+                title={reminderTimes.length >= MAX_REMINDER_TIMES ? t('settings_reminder_limit') : undefined}
+                className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-teal-700 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                {t('settings_reminder_add')}
+              </button>
             </div>
-          ) : null}
+
+            {reminderTimes.length === 0 ? (
+              <div className="mt-4 rounded-[1.25rem] border border-dashed border-slate-300 px-4 py-7 text-center text-sm text-slate-500">
+                {t('settings_reminder_empty')}
+              </div>
+            ) : (
+              <div className="mt-3">
+                {reminderTimes.map((time, index) => (
+                  <div
+                    key={`${time}-${index}`}
+                    className="flex items-center gap-3 border-b border-slate-100 py-3 last:border-b-0"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openTimePicker(index)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openTimePicker(index);
+                        }
+                      }}
+                      className="flex min-h-[44px] flex-1 items-center gap-3 rounded-[1.15rem] p-1 text-left transition hover:bg-slate-50"
+                      aria-label={t('settings_reminder_update_aria', time)}
+                    >
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-teal-700">
+                        <Clock3 className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[1.35rem] font-semibold tracking-[0.02em] text-slate-900 tabular-nums sm:text-[1.5rem]">
+                          {formatReminderDisplayTime(time, db.settings.lang)}
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500">{getNextFireLabel(time)}</div>
+                      </div>
+                    </button>
+
+                    <input
+                      ref={(node) => {
+                        timeInputRefs.current[index] = node;
+                      }}
+                      type="time"
+                      value={time}
+                      onChange={(e) => handleUpdateReminderTime(index, e.target.value)}
+                      className="absolute h-0 w-0 opacity-0"
+                      aria-hidden="true"
+                      tabIndex={-1}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveReminderTime(index)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                      aria-label={t('settings_reminder_delete_aria', time)}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {reminderTimes.length > 0 && reminderTimes.length < MAX_REMINDER_TIMES ? (
+              <button
+                type="button"
+                onClick={handleAddReminderTime}
+                className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[1.1rem] border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-teal-700 transition hover:border-teal-300 hover:bg-teal-50"
+              >
+                <Plus className="h-4 w-4" />
+                {t('settings_reminder_add')}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="border-t border-slate-100 px-5 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              {t('settings_reminder_effects')}
+            </p>
+
+            <div className="mt-3">
+              {effectItems.map((item) => (
+                <label
+                  key={item.key}
+                  className={cn(
+                    'flex items-center justify-between gap-3 border-b border-slate-100 py-3 last:border-b-0',
+                    item.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                  )}
+                >
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <div className="mt-0.5 text-slate-400">{item.icon}</div>
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-slate-900">{item.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.desc}</span>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="peer sr-only"
+                    checked={item.checked}
+                    disabled={item.disabled}
+                    onChange={(e) =>
+                      handleUpdateEffect(item.key, e.target.checked, { disabled: item.disabled })
+                    }
+                  />
+                  <span className="relative h-6 w-10 shrink-0 rounded-full bg-slate-200 transition after:absolute after:left-[3px] after:top-[3px] after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-teal-600 peer-checked:after:translate-x-4 peer-disabled:bg-slate-200/80" />
+                </label>
+              ))}
+            </div>
+
+            {vibrationSupported && reminderEffects.vibration ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_vibration_pattern')}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.keys(VIBRATION_PATTERNS).map((pattern) => {
+                    const active = reminder.vibrationPattern === pattern;
+                    return (
+                      <button
+                        key={pattern}
+                        type="button"
+                        onClick={() =>
+                          handleSetVibrationPattern(pattern as ReminderSettings['vibrationPattern'])
+                        }
+                        className={cn(
+                          'min-h-[36px] rounded-xl border px-3 py-2 text-xs font-medium transition',
+                          active
+                            ? 'border-teal-300 bg-teal-50 text-teal-700'
+                            : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200',
+                        )}
+                      >
+                        {t(`settings_reminder_vibration_${pattern}`)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {reminderEffects.sound ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_sound_type')}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {SOUND_TYPES.map((soundType) => {
+                    const active = reminder.soundType === soundType;
+                    return (
+                      <button
+                        key={soundType}
+                        type="button"
+                        onClick={() => handleSetSoundType(soundType)}
+                        className={cn(
+                          'min-h-[36px] rounded-xl border px-3 py-2 text-xs font-medium transition',
+                          active
+                            ? 'border-teal-300 bg-teal-50 text-teal-700'
+                            : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200',
+                        )}
+                      >
+                        {t(`settings_reminder_sound_${soundType}`)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <div className="border-t border-slate-100 px-5 py-4">
             <div className="flex items-start gap-2">
@@ -752,16 +1029,150 @@ export function Settings() {
                 <p className="text-xs leading-6 text-slate-500">
                   <strong>{t('settings_reminder_important')}</strong> {t('settings_reminder_important_desc')}
                 </p>
-                {isGranted ? (
-                  <button
-                    type="button"
-                    onClick={() => sendTestNotification(db.settings.lang)}
-                    className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
-                  >
-                    {t('settings_reminder_test')}
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={handlePreviewReminder}
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 sm:w-auto"
+                >
+                  {t('settings_reminder_preview')}
+                </button>
               </div>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_debug_title')}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  {t('settings_reminder_debug_desc')}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunDebugCheck}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  {t('settings_reminder_debug_action_check')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearDebugLog}
+                  disabled={reminder.debugLog.length === 0}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t('settings_reminder_debug_action_clear')}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_debug_status')}
+                </p>
+                <p className="mt-2 text-sm font-medium text-slate-900">
+                  {runtimeState.isRunning
+                    ? t('settings_reminder_debug_running')
+                    : t('settings_reminder_debug_stopped')}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {t('settings_reminder_debug_source')}: {runtimeState.lastCheckSource
+                    ? formatDebugSource(runtimeState.lastCheckSource)
+                    : t('settings_reminder_debug_none')}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_debug_last_check')}
+                </p>
+                <p className="mt-2 text-sm font-medium text-slate-900">
+                  {formatDebugDateTime(runtimeState.lastCheckAt)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {t('settings_reminder_debug_next_check')}: {formatDebugDateTime(runtimeState.nextCheckAt)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_debug_last_trigger')}
+                </p>
+                <p className="mt-2 text-sm font-medium text-slate-900">
+                  {latestTrigger ? formatDebugDateTime(latestTrigger.createdAt) : t('settings_reminder_debug_none')}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {latestTrigger?.scheduledTime
+                    ? `${t('settings_reminder_debug_scheduled')}: ${formatReminderDisplayTime(latestTrigger.scheduledTime, db.settings.lang)}`
+                    : t('settings_reminder_debug_empty')}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t('settings_reminder_debug_permission')}
+                </p>
+                <p className="mt-2 text-sm font-medium text-slate-900">{formatPermissionLabel()}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {t('settings_reminder_debug_visibility')}: {document.visibilityState === 'visible'
+                    ? t('settings_reminder_debug_visible')
+                    : t('settings_reminder_debug_hidden')}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white">
+              <div className="border-b border-slate-100 px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">
+                  {t('settings_reminder_debug_log_title')}
+                </p>
+              </div>
+
+              {reminder.debugLog.length === 0 ? (
+                <div className="px-4 py-5 text-sm text-slate-500">
+                  {t('settings_reminder_debug_empty')}
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {reminder.debugLog.map((entry) => (
+                    <div key={entry.id} className="px-4 py-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-700">
+                          {t(`settings_reminder_debug_entry_${entry.type}`)}
+                        </span>
+                        <span className="text-xs text-slate-500">{formatDebugDateTime(entry.createdAt)}</span>
+                        <span className="text-xs text-slate-400">·</span>
+                        <span className="text-xs text-slate-500">{formatDebugSource(entry.source)}</span>
+                      </div>
+
+                      <p className="mt-2 text-sm font-medium text-slate-900">
+                        {formatDebugReason(entry.reason)}
+                      </p>
+
+                      <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                        <p>
+                          {t('settings_reminder_debug_scheduled')}: {entry.scheduledTime
+                            ? formatReminderDisplayTime(entry.scheduledTime, db.settings.lang)
+                            : t('settings_reminder_debug_none')}
+                        </p>
+                        <p>
+                          {t('settings_reminder_debug_due_count')}: {entry.dueCount ?? t('settings_reminder_debug_none')}
+                        </p>
+                        <p>
+                          {t('settings_reminder_debug_effects_requested')}: {formatEffectList(entry.requestedEffects)}
+                        </p>
+                        <p>
+                          {t('settings_reminder_debug_effects_delivered')}: {formatEffectList(entry.deliveredEffects)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
