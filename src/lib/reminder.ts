@@ -9,16 +9,180 @@ export const PERM = {
 } as const;
 
 export type PermissionState = typeof PERM[keyof typeof PERM];
+export type NotificationSupport = 'supported' | 'needs-pwa' | 'none';
+export type PermissionGuideState =
+  | PermissionState
+  | 'ios-wrong-browser'
+  | 'ios-too-old'
+  | 'needs-pwa';
+
+interface NavigatorWithStandalone extends Navigator {
+  standalone?: boolean;
+}
+
+export interface PlatformInfo {
+  isWindows: boolean;
+  isMac: boolean;
+  isAndroid: boolean;
+  isIOS: boolean;
+  isIPad: boolean;
+  isSafari: boolean;
+  isChrome: boolean;
+  isFirefox: boolean;
+  isEdge: boolean;
+  isSamsungBrowser: boolean;
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  isStandalone: boolean;
+  isIOSWebPushCapable: boolean;
+  notifSupport: NotificationSupport;
+}
+
+export interface PermissionStatus {
+  state: PermissionGuideState;
+  canEnable: boolean;
+  support: NotificationSupport;
+  platform: PlatformInfo;
+  permission: PermissionState;
+}
+
+const IOS_ALT_BROWSER_PATTERN = /Chrome|CriOS|FxiOS|Firefox|Edg\/|EdgiOS|OPR|OPiOS|SamsungBrowser/i;
+
+export function getPlatformInfo(): PlatformInfo {
+  const ua = navigator.userAgent || '';
+  const nav = navigator as NavigatorWithStandalone;
+  const isIOS =
+    /iPhone|iPad|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isIPad =
+    /iPad/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  const isMac = /Macintosh|Mac OS X/i.test(ua) && !isIOS;
+  const isMobile = isAndroid || isIOS;
+  const isTablet = isIPad || (isAndroid && !/Mobile/i.test(ua));
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true;
+
+  let isIOSWebPushCapable = false;
+  if (isIOS) {
+    const match = ua.match(/OS (\d+)_(\d+)/i);
+    if (match) {
+      const major = Number.parseInt(match[1], 10);
+      const minor = Number.parseInt(match[2], 10);
+      isIOSWebPushCapable = major > 16 || (major === 16 && minor >= 4);
+    }
+  }
+
+  const isSafari = /Safari/i.test(ua) && !IOS_ALT_BROWSER_PATTERN.test(ua);
+  const isChrome = /Chrome|CriOS/i.test(ua);
+  const isFirefox = /Firefox|FxiOS/i.test(ua);
+  const isEdge = /Edg\//i.test(ua) || /EdgiOS/i.test(ua);
+  const isSamsungBrowser = /SamsungBrowser/i.test(ua);
+
+  let notifSupport: NotificationSupport = 'supported';
+  if (!('Notification' in window)) {
+    notifSupport = 'none';
+  } else if (isIOS && !isSafari) {
+    notifSupport = 'none';
+  } else if (isIOS && !isIOSWebPushCapable) {
+    notifSupport = 'none';
+  } else if (isIOS && isIOSWebPushCapable && !isStandalone) {
+    notifSupport = 'needs-pwa';
+  }
+
+  return {
+    isWindows: /Windows/i.test(ua),
+    isMac,
+    isAndroid,
+    isIOS,
+    isIPad,
+    isSafari,
+    isChrome,
+    isFirefox,
+    isEdge,
+    isSamsungBrowser,
+    isMobile,
+    isTablet,
+    isDesktop: !isMobile && !isTablet,
+    isStandalone,
+    isIOSWebPushCapable,
+    notifSupport,
+  };
+}
+
+export function getPermissionStatus(): PermissionStatus {
+  const platform = getPlatformInfo();
+  const support = platform.notifSupport;
+
+  if (support === 'none') {
+    if (platform.isIOS && !platform.isSafari) {
+      return {
+        state: 'ios-wrong-browser',
+        canEnable: false,
+        support,
+        platform,
+        permission: PERM.NOT_SUPPORTED,
+      };
+    }
+
+    if (platform.isIOS && !platform.isIOSWebPushCapable) {
+      return {
+        state: 'ios-too-old',
+        canEnable: false,
+        support,
+        platform,
+        permission: PERM.NOT_SUPPORTED,
+      };
+    }
+
+    return {
+      state: PERM.NOT_SUPPORTED,
+      canEnable: false,
+      support,
+      platform,
+      permission: PERM.NOT_SUPPORTED,
+    };
+  }
+
+  if (support === 'needs-pwa') {
+    return {
+      state: 'needs-pwa',
+      canEnable: false,
+      support,
+      platform,
+      permission: PERM.NOT_SUPPORTED,
+    };
+  }
+
+  const permission = Notification.permission as PermissionState;
+  return {
+    state: permission,
+    canEnable: permission !== PERM.DENIED,
+    support,
+    platform,
+    permission,
+  };
+}
 
 export function getNotifPermission(): PermissionState {
-  if (!('Notification' in window)) return PERM.NOT_SUPPORTED;
-  return Notification.permission as PermissionState;
+  const status = getPermissionStatus();
+  return status.support === 'supported' ? status.permission : PERM.NOT_SUPPORTED;
 }
 
 export async function requestPermission(): Promise<PermissionState> {
-  if (!('Notification' in window)) return PERM.NOT_SUPPORTED;
-  const result = await Notification.requestPermission();
-  return result as PermissionState;
+  const status = getPermissionStatus();
+  if (status.support !== 'supported' || !('Notification' in window)) {
+    return PERM.NOT_SUPPORTED;
+  }
+
+  try {
+    const result = await Notification.requestPermission();
+    return result as PermissionState;
+  } catch {
+    return getNotifPermission();
+  }
 }
 
 let reminderTimer: number | null = null;

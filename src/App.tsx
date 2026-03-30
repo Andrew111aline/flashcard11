@@ -7,7 +7,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { Layout } from './components/Layout';
 import { DBContext, loadDB, saveDB } from './lib/db';
 import { DB } from './types';
-import { startReminderChecker, checkAndFireReminders, getNotifPermission, PERM } from './lib/reminder';
+import {
+  startReminderChecker,
+  stopReminderChecker,
+  checkAndFireReminders,
+  getNotifPermission,
+  PERM,
+} from './lib/reminder';
 import { normalizeDB } from './lib/notes';
 
 // Placeholder components for pages
@@ -43,16 +49,26 @@ export default function App() {
 
     if (db.settings.reminder?.enabled && getNotifPermission() === PERM.GRANTED) {
       startReminderChecker(() => db, setDB);
+    } else {
+      stopReminderChecker();
     }
     
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        checkAndFireReminders(() => db, setDB);
+        if (db.settings.reminder?.enabled && getNotifPermission() === PERM.GRANTED) {
+          startReminderChecker(() => db, setDB);
+          checkAndFireReminders(() => db, setDB);
+        } else {
+          stopReminderChecker();
+        }
       }
     };
     
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopReminderChecker();
+    };
   }, [db.settings.reminder?.enabled, db.settings.lang, db, setDB]);
 
   const renderPage = () => {
