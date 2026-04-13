@@ -13,6 +13,7 @@ const IOS_ALT_BROWSER_PATTERN = /CriOS|FxiOS|EdgiOS|OPT\/|OPiOS|YaBrowser/;
 export function PWAInstallPrompt() {
   const t = useTranslation();
   const isZh = t('lang') === 'zh';
+  const appIconSrc = `${import.meta.env.BASE_URL}apple-touch-icon.png`;
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -91,7 +92,7 @@ export function PWAInstallPrompt() {
         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white/95 shadow-2xl shadow-slate-900/10 backdrop-blur">
           <div className="flex items-start gap-4 p-4">
             <img
-              src="/apple-touch-icon.png"
+              src={appIconSrc}
               alt="FSRS Flashcards"
               className="h-14 w-14 rounded-2xl border border-slate-200 object-cover"
             />

@@ -39,10 +39,28 @@ import {
   testVibration,
   VIBRATION_PATTERNS,
 } from '../lib/reminder';
+import {
+  buildAnkiExportFiles,
+  buildBackupExport,
+  buildOpenStudyPackExport,
+  buildUniversalCsvExport,
+  unwrapImportedDB,
+  type ExportFile,
+} from '../lib/exporters';
 
 const MAX_REMINDER_TIMES = 5;
 
 type GuideTone = 'success' | 'danger' | 'info' | 'warning' | 'neutral';
+type PwaServiceWorkerStatus = 'active' | 'waiting' | 'installing' | 'missing' | 'unsupported';
+
+interface PwaRuntimeSnapshot {
+  online: boolean;
+  standalone: boolean;
+  secureOrigin: boolean;
+  localPackageOrigin: boolean;
+  serviceWorkerStatus: PwaServiceWorkerStatus;
+  storageEstimate: string | null;
+}
 
 function cloneReminder(reminder?: ReminderSettings): ReminderSettings {
   const fallback = createDefaultReminderSettings();
@@ -94,11 +112,13 @@ async function copyTextToClipboard(text: string) {
 export function Settings() {
   const { db, setDB } = useDB();
   const t = useTranslation();
+  const isZh = db.settings.lang === 'zh';
   const [retention, setRetention] = useState(db.settings.retention * 100);
   const [maxInterval, setMaxInterval] = useState(db.settings.maxInterval);
   const [dailyNewCards, setDailyNewCards] = useState(db.settings.dailyNewCards);
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>(() => getPermissionStatus());
   const [runtimeState, setRuntimeState] = useState(() => getReminderRuntimeState());
+  const [pwaRuntime, setPwaRuntime] = useState<PwaRuntimeSnapshot>(() => createPwaRuntimeSnapshot());
   const timeInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   const reminder = cloneReminder(db.settings.reminder);
@@ -150,6 +170,41 @@ export function Settings() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshPwaRuntime = async () => {
+      const next = await readPwaRuntimeSnapshot();
+      if (!disposed) setPwaRuntime(next);
+    };
+
+    const media = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayModeChange = () => {
+      void refreshPwaRuntime();
+    };
+    const handleConnectivityChange = () => {
+      void refreshPwaRuntime();
+    };
+
+    void refreshPwaRuntime();
+    window.addEventListener('focus', handleConnectivityChange);
+    window.addEventListener('online', handleConnectivityChange);
+    window.addEventListener('offline', handleConnectivityChange);
+    if (media.addEventListener) media.addEventListener('change', handleDisplayModeChange);
+    else media.addListener(handleDisplayModeChange);
+    navigator.serviceWorker?.addEventListener?.('controllerchange', handleConnectivityChange);
+
+    return () => {
+      disposed = true;
+      window.removeEventListener('focus', handleConnectivityChange);
+      window.removeEventListener('online', handleConnectivityChange);
+      window.removeEventListener('offline', handleConnectivityChange);
+      if (media.removeEventListener) media.removeEventListener('change', handleDisplayModeChange);
+      else media.removeListener(handleDisplayModeChange);
+      navigator.serviceWorker?.removeEventListener?.('controllerchange', handleConnectivityChange);
+    };
+  }, []);
+
   const updateReminderSettings = (updater: (current: ReminderSettings) => ReminderSettings) => {
     setDB((prev) => {
       const current = cloneReminder(prev.settings.reminder);
@@ -177,16 +232,39 @@ export function Settings() {
     alert(t('settings_saved'));
   };
 
-  const handleExport = () => {
-    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+  const downloadExportFile = (file: ExportFile) => {
+    const blob = new Blob([file.content], { type: file.mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `fsrs-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = file.name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportBackup = () => {
+    downloadExportFile(buildBackupExport(db));
+  };
+
+  const handleExportOpenPack = () => {
+    downloadExportFile(buildOpenStudyPackExport(db));
+  };
+
+  const handleExportUniversalCsv = () => {
+    downloadExportFile(buildUniversalCsvExport(db));
+  };
+
+  const handleExportAnki = (type: 'basic' | 'reversed' | 'cloze' | 'guide') => {
+    const files = buildAnkiExportFiles(db);
+    const indexMap = {
+      basic: 0,
+      reversed: 1,
+      cloze: 2,
+      guide: 3,
+    } as const;
+    downloadExportFile(files[indexMap[type]]);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -196,10 +274,10 @@ export function Settings() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const data = JSON.parse(event.target?.result as string);
-        if (data.decks && data.settings && (data.cards || data.notes)) {
+        const imported = unwrapImportedDB(JSON.parse(event.target?.result as string));
+        if (imported) {
           if (confirm(t('settings_import_confirm'))) {
-            setDB(data);
+            setDB(imported);
             alert(t('settings_import_success'));
           }
         } else {
@@ -313,6 +391,7 @@ export function Settings() {
   const handleCheckPWAInstalled = () => {
     const nextStatus = getPermissionStatus();
     setPermissionStatus(nextStatus);
+    void readPwaRuntimeSnapshot().then(setPwaRuntime);
     if (nextStatus.state === 'needs-pwa') {
       alert(t('settings_reminder_add_home_open'));
     }
@@ -504,6 +583,14 @@ export function Settings() {
 
     return labels.join(' / ');
   };
+
+  const refreshPwaStatus = () => {
+    void readPwaRuntimeSnapshot().then(setPwaRuntime);
+  };
+
+  const serviceWorkerTone = getPwaStatusTone(pwaRuntime.serviceWorkerStatus);
+  const serviceWorkerLabel = getPwaStatusLabel(pwaRuntime.serviceWorkerStatus, isZh);
+  const offlineReady = pwaRuntime.serviceWorkerStatus === 'active' || pwaRuntime.serviceWorkerStatus === 'waiting';
 
   const renderGuideCard = ({
     tone,
@@ -841,6 +928,77 @@ export function Settings() {
           </div>
 
           {renderPermissionGuide()}
+
+          <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {isZh ? 'PWA 与离线状态' : 'PWA & Offline Status'}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  {isZh
+                    ? '查看当前页面是否已安装、是否具备离线缓存，以及本地 BAT 启动方式是否就绪。'
+                    : 'See whether this page is installed, offline-ready, and running in a BAT-launched local package.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={refreshPwaStatus}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                {isZh ? '刷新状态' : 'Refresh'}
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <RuntimeStatusCard
+                label={isZh ? '网络状态' : 'Connectivity'}
+                value={pwaRuntime.online ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
+                tone={pwaRuntime.online ? 'sky' : 'slate'}
+              />
+              <RuntimeStatusCard
+                label={isZh ? '安装模式' : 'Display Mode'}
+                value={pwaRuntime.standalone ? (isZh ? '已安装' : 'Installed') : (isZh ? '浏览器标签页' : 'Browser Tab')}
+                tone={pwaRuntime.standalone ? 'emerald' : 'amber'}
+              />
+              <RuntimeStatusCard
+                label={isZh ? '缓存就绪' : 'Offline Cache'}
+                value={serviceWorkerLabel}
+                tone={serviceWorkerTone}
+              />
+              <RuntimeStatusCard
+                label={isZh ? '运行来源' : 'Runtime Origin'}
+                value={pwaRuntime.localPackageOrigin
+                  ? (isZh ? '本地 BAT 启动包' : 'Local BAT Package')
+                  : (pwaRuntime.secureOrigin ? (isZh ? '安全站点' : 'Secure Origin') : (isZh ? '非安全来源' : 'Insecure Origin'))}
+                tone={pwaRuntime.localPackageOrigin || pwaRuntime.secureOrigin ? 'emerald' : 'rose'}
+              />
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-600">
+              <p>
+                {offlineReady
+                  ? (isZh
+                    ? '当前已经具备离线缓存能力。首次联网打开后，核心页面、图标和最近用到的媒体资源会逐步缓存下来。'
+                    : 'Offline caching is ready. After the first online visit, the core pages, icons, and recently used media will be cached progressively.')
+                  : (isZh
+                    ? '离线缓存还没有完全就绪。建议联网打开一次页面，等待几秒后再刷新，让 service worker 完成接管。'
+                    : 'Offline caching is not fully ready yet. Open the page once while online, wait a few seconds, then refresh so the service worker can take control.')}
+              </p>
+              {pwaRuntime.localPackageOrigin && (
+                <p className="mt-2">
+                  {isZh
+                    ? '通过 `open-site.bat` 启动时，站点运行在本地可信来源上，PWA 安装与离线缓存能力仍然可用。'
+                    : 'When launched from `open-site.bat`, the site runs on a trusted local origin, so PWA installability and offline caching remain available.'}
+                </p>
+              )}
+              {pwaRuntime.storageEstimate && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {isZh ? `浏览器存储占用：${pwaRuntime.storageEstimate}` : `Browser storage use: ${pwaRuntime.storageEstimate}`}
+                </p>
+              )}
+            </div>
+          </div>
 
           <div className="px-5 py-4">
             <div className="flex items-center justify-between gap-3">
@@ -1183,11 +1341,77 @@ export function Settings() {
           <div className="space-y-4">
             <div className="flex flex-col items-center justify-between gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row">
               <div>
+                <h3 className="font-medium text-gray-900">{isZh ? '开放格式导出' : 'Open Format Exports'}</h3>
+                <p className="text-sm text-gray-500">
+                  {isZh
+                    ? '导出为开放 JSON 或通用 CSV，便于二次开发、迁移到其他闪卡工具，或整理给墨墨记忆卡等产品使用。'
+                    : 'Export as open JSON or universal CSV for migrations, custom tooling, or second-pass imports into other flashcard apps.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleExportOpenPack}
+                  className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                  {isZh ? 'Open JSON' : 'Open JSON'}
+                </button>
+                <button
+                  onClick={handleExportUniversalCsv}
+                  className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                  {isZh ? '通用 CSV' : 'Universal CSV'}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-medium text-gray-900">{isZh ? 'Anki 文本导出' : 'Anki Text Exports'}</h3>
+                  <p className="text-sm text-gray-500">
+                    {isZh
+                      ? '按 Basic / Basic(含反向) / Cloze 分文件导出，匹配 Anki 文本导入流程，并附带导入说明。'
+                      : 'Split into Basic / Reversed / Cloze text imports for Anki, with a small import guide.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handleExportAnki('basic')}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    Basic
+                  </button>
+                  <button
+                    onClick={() => handleExportAnki('reversed')}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    Reversed
+                  </button>
+                  <button
+                    onClick={() => handleExportAnki('cloze')}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    Cloze
+                  </button>
+                  <button
+                    onClick={() => handleExportAnki('guide')}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    {isZh ? '导入说明' : 'Guide'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center justify-between gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row">
+              <div>
                 <h3 className="font-medium text-gray-900">{t('settings_export')}</h3>
                 <p className="text-sm text-gray-500">{t('settings_export_desc')}</p>
               </div>
               <button
-                onClick={handleExport}
+                onClick={handleExportBackup}
                 className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
               >
                 <Download className="h-4 w-4" />
@@ -1198,7 +1422,11 @@ export function Settings() {
             <div className="flex flex-col items-center justify-between gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row">
               <div>
                 <h3 className="font-medium text-gray-900">{t('settings_import')}</h3>
-                <p className="text-sm text-gray-500">{t('settings_import_desc')}</p>
+                <p className="text-sm text-gray-500">
+                  {isZh
+                    ? `${t('settings_import_desc')} 也支持导入 Open Study Pack JSON。`
+                    : `${t('settings_import_desc')} Open Study Pack JSON is also supported.`}
+                </p>
               </div>
               <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50">
                 <Upload className="h-4 w-4" />
@@ -1228,4 +1456,112 @@ export function Settings() {
       </div>
     </div>
   );
+}
+
+function RuntimeStatusCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'emerald' | 'amber' | 'rose' | 'sky' | 'slate';
+}) {
+  const toneClass = {
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    amber: 'border-amber-200 bg-amber-50 text-amber-800',
+    rose: 'border-rose-200 bg-rose-50 text-rose-800',
+    sky: 'border-sky-200 bg-sky-50 text-sky-800',
+    slate: 'border-slate-200 bg-slate-50 text-slate-800',
+  }[tone];
+
+  return (
+    <div className={cn('rounded-2xl border px-4 py-3', toneClass)}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">{label}</p>
+      <p className="mt-2 text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function createPwaRuntimeSnapshot(): PwaRuntimeSnapshot {
+  return {
+    online: navigator.onLine,
+    standalone: isStandalonePwaMode(),
+    secureOrigin: window.isSecureContext,
+    localPackageOrigin: isLocalPackageOrigin(),
+    serviceWorkerStatus: 'serviceWorker' in navigator ? 'missing' : 'unsupported',
+    storageEstimate: null,
+  };
+}
+
+async function readPwaRuntimeSnapshot(): Promise<PwaRuntimeSnapshot> {
+  const base = createPwaRuntimeSnapshot();
+  let serviceWorkerStatus: PwaServiceWorkerStatus = base.serviceWorkerStatus;
+
+  if ('serviceWorker' in navigator) {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (registration?.waiting) serviceWorkerStatus = 'waiting';
+    else if (registration?.installing) serviceWorkerStatus = 'installing';
+    else if (registration?.active || navigator.serviceWorker.controller) serviceWorkerStatus = 'active';
+    else serviceWorkerStatus = 'missing';
+  }
+
+  return {
+    ...base,
+    serviceWorkerStatus,
+    storageEstimate: await readStorageEstimate(),
+  };
+}
+
+async function readStorageEstimate() {
+  if (!navigator.storage?.estimate) return null;
+  try {
+    const { usage, quota } = await navigator.storage.estimate();
+    if (!usage || !quota) return null;
+    return `${formatMegabytes(usage)} MB / ${formatMegabytes(quota)} MB`;
+  } catch {
+    return null;
+  }
+}
+
+function formatMegabytes(value: number) {
+  return (value / 1024 / 1024).toFixed(value < 1024 * 1024 * 100 ? 1 : 0);
+}
+
+function isStandalonePwaMode() {
+  const nav = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true;
+}
+
+function isLocalPackageOrigin() {
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
+function getPwaStatusTone(status: PwaServiceWorkerStatus) {
+  switch (status) {
+    case 'active':
+    case 'waiting':
+      return 'emerald' as const;
+    case 'installing':
+      return 'amber' as const;
+    case 'unsupported':
+      return 'rose' as const;
+    default:
+      return 'slate' as const;
+  }
+}
+
+function getPwaStatusLabel(status: PwaServiceWorkerStatus, isZh: boolean) {
+  switch (status) {
+    case 'active':
+      return isZh ? '已缓存并接管' : 'Active';
+    case 'waiting':
+      return isZh ? '缓存完成，待刷新' : 'Waiting to Activate';
+    case 'installing':
+      return isZh ? '正在准备缓存' : 'Installing';
+    case 'unsupported':
+      return isZh ? '当前浏览器不支持' : 'Unsupported';
+    default:
+      return isZh ? '尚未接管' : 'Not Ready Yet';
+  }
 }

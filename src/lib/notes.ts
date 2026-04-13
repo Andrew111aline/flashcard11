@@ -275,6 +275,11 @@ export function renderRichText(text: string, htmlReplacements: Record<string, st
   };
 
   working = working
+    .replace(/\[sound:([^\]\n]+?)\]/gi, (_, rawUrl) => {
+      const url = sanitizeMediaUrl(String(rawUrl).trim());
+      if (!url) return '';
+      return createToken(`<audio controls preload="none" class="note-audio" src="${escapeHtml(url)}"></audio>`);
+    })
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, formula) =>
       createToken(`<div class="note-math note-math-block">${escapeHtml(String(formula).trim())}</div>`),
     )
@@ -297,6 +302,8 @@ export function stripMarkdown(text: string) {
       const separatorIndex = content.indexOf('::');
       return separatorIndex >= 0 ? content.slice(0, separatorIndex) : content;
     })
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+    .replace(/\[sound:([^\]\n]+?)\]/gi, ' ')
     .replace(/\$\$([\s\S]+?)\$\$/g, '$1')
     .replace(/\$([^\n$]+?)\$/g, '$1')
     .replace(/```[\s\S]*?```/g, ' ')
@@ -703,6 +710,12 @@ function markdownToHtml(text: string) {
 function renderInlineMarkdown(text: string) {
   let html = escapeHtml(text);
 
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, altText, rawUrl) => {
+    const url = sanitizeMediaUrl(String(rawUrl).trim());
+    const alt = String(altText).trim();
+    if (!url) return alt;
+    return `<img src="${url}" alt="${alt}" loading="lazy" class="note-image" />`;
+  });
   html = html.replace(
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noreferrer" class="note-link">$1</a>',
@@ -787,6 +800,14 @@ function truncateText(text: string, limit: number) {
   const source = String(text || '').trim();
   if (source.length <= limit) return source;
   return `${source.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+}
+
+function sanitizeMediaUrl(value: string) {
+  const url = String(value || '').trim();
+  if (!url) return '';
+  if (/^(https?:\/\/|\/|\.\/|\.\.\/)/i.test(url)) return url;
+  if (/^data:(image|audio)\//i.test(url)) return url;
+  return '';
 }
 
 const QUALITY_MESSAGES = {

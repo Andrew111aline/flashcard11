@@ -1,8 +1,9 @@
 node_modules/
 build/
 dist/
+release/
 coverage/
 .DS_Store
 *.log
+.idea/
 .env*
-!.env.example

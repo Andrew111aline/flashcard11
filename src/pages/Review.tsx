@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { useDB, useTranslation } from '../lib/db';
 import { FSRS } from '../lib/fsrs';
@@ -18,6 +18,7 @@ export function Review() {
   const [isFlipped, setIsFlipped] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [sessionStats, setSessionStats] = useState({ reviewed: 0, total: 0 });
+  const pendingRequeueTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     const onHashChange = () => setRouteHash(window.location.hash || '#review');
@@ -28,8 +29,13 @@ export function Review() {
   const deckId = useMemo(() => new URLSearchParams(routeHash.split('?')[1] || '').get('deckId'), [routeHash]);
   const deck = useMemo(() => db.decks.find((item) => item.id === deckId), [db.decks, deckId]);
   const fsrs = useMemo(() => new FSRS(db.settings), [db.settings]);
+  const clearPendingRequeues = useCallback(() => {
+    pendingRequeueTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    pendingRequeueTimersRef.current = [];
+  }, []);
 
   useEffect(() => {
+    clearPendingRequeues();
     if (!deckId) return;
     const now = new Date();
     const due = db.cards
@@ -40,7 +46,30 @@ export function Review() {
     setIsFlipped(false);
     setShowHint(false);
     setSessionStats({ reviewed: 0, total: due.length });
-  }, [deckId]);
+    return clearPendingRequeues;
+  }, [clearPendingRequeues, deckId]);
+
+  const scheduleRequeue = useCallback((card: Card, now: Date) => {
+    if (card.state !== 'learning' && card.state !== 'relearning') return;
+
+    const delayMs = new Date(card.dueAt).getTime() - now.getTime();
+    const enqueue = () => {
+      setQueue((prev) => [...prev, card]);
+      setSessionStats((prev) => ({ ...prev, total: prev.total + 1 }));
+    };
+
+    if (delayMs <= 0) {
+      enqueue();
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      pendingRequeueTimersRef.current = pendingRequeueTimersRef.current.filter((id) => id !== timerId);
+      enqueue();
+    }, delayMs);
+
+    pendingRequeueTimersRef.current.push(timerId);
+  }, []);
 
   const currentCard = queue[current];
   const currentNote = useMemo(
@@ -76,28 +105,12 @@ export function Review() {
       ],
     }));
 
-    setQueue((prev) => {
-      const next = [...prev];
-      if (
-        (updatedCard.state === 'learning' || updatedCard.state === 'relearning') &&
-        new Date(updatedCard.dueAt) <= new Date(now.getTime() + 86400000)
-      ) {
-        next.push(updatedCard);
-      }
-      return next;
-    });
-    setSessionStats((prev) => ({
-      reviewed: prev.reviewed + 1,
-      total:
-        (updatedCard.state === 'learning' || updatedCard.state === 'relearning') &&
-        new Date(updatedCard.dueAt) <= new Date(now.getTime() + 86400000)
-          ? prev.total + 1
-          : prev.total,
-    }));
+    scheduleRequeue(updatedCard, now);
+    setSessionStats((prev) => ({ ...prev, reviewed: prev.reviewed + 1 }));
     setCurrent((prev) => prev + 1);
     setIsFlipped(false);
     setShowHint(false);
-  }, [currentCard, fsrs, setDB]);
+  }, [currentCard, fsrs, scheduleRequeue, setDB]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

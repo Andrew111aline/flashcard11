@@ -6,51 +6,15 @@ export function Home() {
   const t = useTranslation();
 
   const now = new Date();
-  const dueCards = db.cards.filter(c => new Date(c.dueAt) <= now);
-  
-  // Calculate streak
-  const getStreak = () => {
-    if (db.reviews.length === 0) return 0;
-    
-    // Group reviews by date (YYYY-MM-DD)
-    const reviewDates = new Set<string>(
-      db.reviews.map(r => new Date(r.reviewedAt).toISOString().split('T')[0])
-    );
-    
-    const sortedDates = Array.from(reviewDates).sort((a, b) => b.localeCompare(a));
-    
-    let streak = 0;
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-    
-    if (!reviewDates.has(today) && !reviewDates.has(yesterday)) {
-      return 0;
-    }
-    
-    let currentDate = new Date(sortedDates[0]);
-    for (const dateStr of sortedDates) {
-      const d = new Date(dateStr);
-      const diffDays = Math.round((currentDate.getTime() - d.getTime()) / 86400000);
-      
-      if (diffDays === 0 || diffDays === 1) {
-        if (diffDays === 1 || streak === 0) {
-           streak++;
-        }
-        currentDate = d;
-      } else {
-        break;
-      }
-    }
-    
-    return streak;
-  };
-
-  const streak = getStreak();
-
-  const dueByDeck = db.decks.map(deck => {
-    const due = db.cards.filter(c => c.deckId === deck.id && new Date(c.dueAt) <= now).length;
-    return { ...deck, due };
-  }).filter(d => d.due > 0);
+  const noteIds = new Set(db.notes.map((note) => note.id));
+  const dueCards = db.cards.filter((card) => noteIds.has(card.noteId) && new Date(card.dueAt) <= now);
+  const streak = getReviewStreak(db.reviews);
+  const dueByDeck = db.decks
+    .map((deck) => ({
+      ...deck,
+      due: dueCards.filter((card) => card.deckId === deck.id).length,
+    }))
+    .filter((deck) => deck.due > 0);
 
   const getGreeting = () => {
     const hour = now.getHours();
@@ -122,4 +86,32 @@ export function Home() {
       )}
     </div>
   );
+}
+
+function getReviewStreak(reviews: { reviewedAt: string }[]) {
+  if (reviews.length === 0) return 0;
+
+  const uniqueDays = new Set(reviews.map((review) => formatDateKey(new Date(review.reviewedAt))));
+  let streak = 0;
+  const cursor = startOfLocalDay(new Date());
+
+  while (uniqueDays.has(formatDateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return streak;
+}
+
+function startOfLocalDay(date: Date) {
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  return value;
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

@@ -212,7 +212,7 @@ function renderEditorFields({
           <FieldShell label={isZh ? '来源 / 语境' : 'Source / Context'}><input value={note.fields.source} onChange={(e) => updateField('source', e.target.value)} className="editor-input" placeholder={isZh ? '例如：生物必修二，第 17 页' : 'e.g. Biology textbook p.17'} /></FieldShell>
           {tagField}
         </div>
-        <FieldShell label={isZh ? '额外信息' : 'Extra'} hint={isZh ? '翻面后显示，不参与测试。' : 'Shown after reveal, not directly tested.'}>
+        <FieldShell label={isZh ? '额外信息' : 'Extra'} hint={isZh ? '翻面后显示，不参与测试。支持 Markdown、图片 `![alt](url)` 和音频 `[sound:url]`。' : 'Shown after reveal, not directly tested. Supports Markdown, images `![alt](url)`, and audio `[sound:url]`.'}>
           <textarea value={note.fields.extra} onChange={(e) => updateField('extra', e.target.value)} className="editor-textarea" rows={5} placeholder={isZh ? '补充解释、例句、误区提醒等。' : 'Add explanation, examples, or pitfalls here.'} />
         </FieldShell>
       </>
@@ -223,7 +223,7 @@ function renderEditorFields({
     return (
       <>
         <FieldShell label={isZh ? '标题' : 'Title'}><input value={note.fields.title} onChange={(e) => updateField('title', e.target.value)} className="editor-input" placeholder={isZh ? '例如：光合作用总览' : 'e.g. Photosynthesis overview'} autoFocus /></FieldShell>
-        <FieldShell label={isZh ? '笔记内容' : 'Note Body'}><textarea value={note.fields.content} onChange={(e) => updateField('content', e.target.value)} className="editor-textarea" rows={9} placeholder={isZh ? '把暂时不适合直接测试的背景知识放在这里。' : 'Keep background knowledge here until it is ready for cards.'} /></FieldShell>
+        <FieldShell label={isZh ? '笔记内容' : 'Note Body'} hint={isZh ? '支持 Markdown、图片 `![alt](url)` 和音频 `[sound:url]`。' : 'Supports Markdown, images `![alt](url)`, and audio `[sound:url]`.'}><textarea value={note.fields.content} onChange={(e) => updateField('content', e.target.value)} className="editor-textarea" rows={9} placeholder={isZh ? '把暂时不适合直接测试的背景知识放在这里。' : 'Keep background knowledge here until it is ready for cards.'} /></FieldShell>
         <div className="grid gap-5 lg:grid-cols-2">
           <FieldShell label={isZh ? '来源 / 语境' : 'Source / Context'}><input value={note.fields.source} onChange={(e) => updateField('source', e.target.value)} className="editor-input" placeholder={isZh ? '例如：老师讲义，第 5 页' : 'e.g. lecture handout p.5'} /></FieldShell>
           {tagField}
@@ -244,7 +244,7 @@ function renderEditorFields({
         <FieldShell label={isZh ? '提示' : 'Hint'}><input value={note.fields.hint} onChange={(e) => updateField('hint', e.target.value)} className="editor-input" placeholder={isZh ? '可选：给自己一个渐进提示' : 'Optional progressive hint'} /></FieldShell>
         <FieldShell label={isZh ? '来源 / 语境' : 'Source / Context'}><input value={note.fields.source} onChange={(e) => updateField('source', e.target.value)} className="editor-input" placeholder={isZh ? '例如：精读第 3 章 p.47' : 'e.g. deep reading ch.3 p.47'} /></FieldShell>
       </div>
-      <FieldShell label={isZh ? '额外信息' : 'Extra'} hint={isZh ? '翻面后展开显示，不参与测试。' : 'Shown after reveal, but not directly tested.'}>
+      <FieldShell label={isZh ? '额外信息' : 'Extra'} hint={isZh ? '翻面后展开显示，不参与测试。支持 Markdown、图片 `![alt](url)` 和音频 `[sound:url]`。' : 'Shown after reveal, but not directly tested. Supports Markdown, images `![alt](url)`, and audio `[sound:url]`.'}>
         <textarea value={note.fields.extra} onChange={(e) => updateField('extra', e.target.value)} className="editor-textarea" rows={5} placeholder={isZh ? '补充例句、误区、推导过程等。' : 'Add examples, pitfalls, or derivations here.'} />
       </FieldShell>
       {tagField}
