@@ -295,6 +295,14 @@ export const LANGS: Record<string, Record<string, any>> = {
     settings_import_success: '数据导入成功。',
     settings_import_invalid: '备份文件格式无效。',
     settings_import_fail: '解析备份文件失败。',
+    settings_import_text: '导入外部卡片',
+    settings_import_text_desc: '追加导入 Anki / 类 Anki 工具导出的 txt、csv、tsv 文本卡片，或直接导入标准 .apkg。支持识别常见的 deck、tags、notetype 元数据；文本文件会自动尝试 UTF-8、UTF-16、GB18030 等常见编码。',
+    settings_import_text_btn: '导入卡包',
+    settings_import_text_success: (notes: number, cards: number, decks: number, skipped: number) =>
+      `已导入 ${notes} 条笔记、${cards} 张卡片，新建 ${decks} 个卡组，跳过 ${skipped} 条重复内容。`,
+    settings_import_text_partial: (notes: number, cards: number, decks: number, skipped: number, failed: number) =>
+      `已导入 ${notes} 条笔记、${cards} 张卡片，新建 ${decks} 个卡组，跳过 ${skipped} 条重复内容；另有 ${failed} 个文件未能解析。`,
+    settings_import_text_fail: '没有识别到可导入的卡片。请确认文件为 txt/csv/tsv/.apkg，且 .apkg 为标准 Anki 导出包。',
     settings_danger:      '危险区域',
     settings_danger_desc: '永久删除所有笔记、卡片和复习数据。此操作不可撤销。',
     settings_clear:       '清空所有数据',
@@ -620,6 +628,14 @@ export const LANGS: Record<string, Record<string, any>> = {
     settings_import_success: 'Data imported successfully.',
     settings_import_invalid: 'Invalid backup file format.',
     settings_import_fail: 'Failed to parse backup file.',
+    settings_import_text: 'Import External Cards',
+    settings_import_text_desc: 'Append cards from Anki or similar flashcard tools exported as txt, csv, or tsv text files, or import a standard .apkg directly. Common deck, tags, and notetype metadata are supported, and text files will try common encodings like UTF-8, UTF-16, and GB18030 automatically.',
+    settings_import_text_btn: 'Import Pack',
+    settings_import_text_success: (notes: number, cards: number, decks: number, skipped: number) =>
+      `Imported ${notes} notes and ${cards} cards, created ${decks} deck${decks !== 1 ? 's' : ''}, and skipped ${skipped} duplicate entr${skipped === 1 ? 'y' : 'ies'}.`,
+    settings_import_text_partial: (notes: number, cards: number, decks: number, skipped: number, failed: number) =>
+      `Imported ${notes} notes and ${cards} cards, created ${decks} deck${decks !== 1 ? 's' : ''}, skipped ${skipped} duplicate entr${skipped === 1 ? 'y' : 'ies'}, and could not parse ${failed} file${failed !== 1 ? 's' : ''}.`,
+    settings_import_text_fail: 'No importable cards were found. Please use a txt/csv/tsv/.apkg file, and make sure the .apkg is a standard Anki export.',
     settings_danger:      'Danger Zone',
     settings_danger_desc: 'Permanently delete all notes, cards, and review data. This cannot be undone.',
     settings_clear:       'Clear All Data',

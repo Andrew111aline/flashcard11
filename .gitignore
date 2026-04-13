@@ -3,6 +3,7 @@ build/
 dist/
 release/
 coverage/
+.tmp_apkg/
 .DS_Store
 *.log
 .idea/

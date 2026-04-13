@@ -47,6 +47,7 @@ import {
   unwrapImportedDB,
   type ExportFile,
 } from '../lib/exporters';
+import { importExternalTextPackage, readImportedTextFile } from '../lib/importers';
 
 const MAX_REMINDER_TIMES = 5;
 
@@ -267,7 +268,7 @@ export function Settings() {
     downloadExportFile(files[indexMap[type]]);
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -288,6 +289,75 @@ export function Settings() {
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleImportExternal = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    const files = fileList
+      ? Array.from({ length: fileList.length }, (_, index) => fileList.item(index)).filter((file): file is File => Boolean(file))
+      : [];
+    if (!files.length) return;
+
+    let nextDB = db;
+    let failedFiles = 0;
+    const summary = {
+      importedNotes: 0,
+      importedCards: 0,
+      createdDecks: 0,
+      skippedDuplicates: 0,
+    };
+
+    for (const file of files) {
+      try {
+        const lowerName = file.name.toLowerCase();
+        const result = lowerName.endsWith('.apkg')
+          ? await (await import('../lib/ankiApkg')).importAnkiPackage({
+              currentDB: nextDB,
+              file,
+              lang: db.settings.lang,
+            })
+          : importExternalTextPackage({
+              currentDB: nextDB,
+              fileName: file.name,
+              content: await readImportedTextFile(file),
+              lang: db.settings.lang,
+            });
+        nextDB = result.db;
+        summary.importedNotes += result.summary.importedNotes;
+        summary.importedCards += result.summary.importedCards;
+        summary.createdDecks += result.summary.createdDecks;
+        summary.skippedDuplicates += result.summary.skippedDuplicates;
+      } catch {
+        failedFiles += 1;
+      }
+    }
+
+    if (summary.importedNotes === 0) {
+      alert(t('settings_import_text_fail'));
+      e.target.value = '';
+      return;
+    }
+
+    setDB(nextDB);
+    alert(
+      failedFiles > 0
+        ? t(
+            'settings_import_text_partial',
+            summary.importedNotes,
+            summary.importedCards,
+            summary.createdDecks,
+            summary.skippedDuplicates,
+            failedFiles,
+          )
+        : t(
+            'settings_import_text_success',
+            summary.importedNotes,
+            summary.importedCards,
+            summary.createdDecks,
+            summary.skippedDuplicates,
+          ),
+    );
     e.target.value = '';
   };
 
@@ -1431,7 +1501,27 @@ export function Settings() {
               <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50">
                 <Upload className="h-4 w-4" />
                 {t('settings_import_btn')}
-                <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+                <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+              </label>
+            </div>
+
+            <div className="flex flex-col items-center justify-between gap-4 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row">
+              <div>
+                <h3 className="font-medium text-gray-900">{t('settings_import_text')}</h3>
+                <p className="text-sm text-gray-500">
+                  {t('settings_import_text_desc')}
+                </p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50">
+                <Upload className="h-4 w-4" />
+                {t('settings_import_text_btn')}
+                <input
+                  type="file"
+                  accept=".txt,.tsv,.csv,.apkg"
+                  multiple
+                  onChange={handleImportExternal}
+                  className="hidden"
+                />
               </label>
             </div>
 
